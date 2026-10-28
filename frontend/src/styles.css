@@ -2,19 +2,22 @@
   box-sizing: border-box;
 }
 
-body {
+html, body {
   margin: 0;
   background: #000;
   color: #cdf7d8;
   font-family: "Courier New", monospace;
+  overflow-x: hidden;
 }
 
 .app {
   min-height: 100vh;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 24px 12px 48px;
+  box-sizing: border-box;
 }
 
 h1 {
@@ -29,12 +32,15 @@ h1 {
   align-items: flex-start;
   flex-wrap: wrap;
   justify-content: center;
+  width: 100%;
+  max-width: 100%;
 }
 
 .game-wrapper {
   position: relative;
   width: 800px;
   max-width: 100%;
+  min-width: 0;
 }
 
 .hud {
@@ -121,6 +127,8 @@ h1 {
 
 .side-panel {
   width: 260px;
+  max-width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 20px;

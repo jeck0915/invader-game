@@ -11,12 +11,34 @@ const PLAYER_BULLET_SPEED = 520;
 const ENEMY_BULLET_SPEED = 260;
 const ENEMY_WIDTH = 32;
 const ENEMY_HEIGHT = 24;
+const ENEMY_PIXEL = 4; // sprites are drawn on an 8x6 grid, 4px per cell
 const ENEMY_H_GAP = 18;
 const ENEMY_V_GAP = 16;
 const ENEMY_ROWS = 5;
 const ENEMY_COLS = 8;
 const ENEMY_STEP_DOWN = 18;
 const ENEMY_SHOOT_BASE_INTERVAL = 1.1;
+const MAX_DIVERS = 2;
+const DIVE_SPEED_BASE = 150;
+
+const BARRIER_CELL = 4;
+const BARRIER_COUNT = 4;
+// classic bunker silhouette: solid block with an arch cut out of the bottom
+const BARRIER_SHAPE = [
+  "00111111100",
+  "01111111110",
+  "11111111111",
+  "11111111111",
+  "11111111111",
+  "11111111111",
+  "11100000111",
+  "11000000011",
+];
+const BARRIER_COLS = BARRIER_SHAPE[0].length;
+const BARRIER_ROWS = BARRIER_SHAPE.length;
+const BARRIER_WIDTH = BARRIER_COLS * BARRIER_CELL;
+const BARRIER_HEIGHT = BARRIER_ROWS * BARRIER_CELL;
+const BARRIER_Y = FIELD_HEIGHT - 150;
 
 export type GameStatus = "READY" | "PLAYING" | "WAVE_CLEAR" | "GAME_OVER";
 
@@ -27,12 +49,25 @@ export interface Bullet {
   height: number;
   vy: number;
   owner: "player" | "enemy";
+  blocked?: boolean;
+}
+
+export interface Barrier {
+  x: number;
+  y: number;
+  cells: boolean[][];
 }
 
 export interface Enemy {
   row: number;
   col: number;
   alive: boolean;
+  diving: boolean;
+  diveX: number;
+  diveY: number;
+  diveVX: number;
+  diveVY: number;
+  diveShot: boolean;
 }
 
 export interface Explosion {
@@ -49,7 +84,32 @@ export interface Snapshot {
 }
 
 const ROW_POINTS = [40, 30, 30, 20, 10];
-const ROW_COLORS = ["#ff4d6d", "#ffb703", "#ffb703", "#4dd0e1", "#4dd0e1"];
+// retro green monochrome palette, brighter near the top of the formation
+const ROW_COLORS = ["#baffc9", "#7cffb2", "#58ffa0", "#3ddc84", "#2bb673"];
+
+type EnemyType = "squid" | "crab" | "octopus";
+
+function enemyType(row: number): EnemyType {
+  if (row === 0) return "squid";
+  if (row === 1 || row === 2) return "crab";
+  return "octopus";
+}
+
+// 8x6 dot-matrix sprites, two animation frames per type (classic alien walk-cycle)
+const SPRITES: Record<EnemyType, { a: string[]; b: string[] }> = {
+  squid: {
+    a: ["00111100", "01111110", "11111111", "11011011", "11111111", "10111101"],
+    b: ["00111100", "01111110", "11111111", "11011011", "11111111", "01011010"],
+  },
+  crab: {
+    a: ["01100110", "10111101", "11111111", "01111110", "11000011", "10011001"],
+    b: ["01100110", "10111101", "11111111", "01111110", "11000011", "01100110"],
+  },
+  octopus: {
+    a: ["00011000", "00111100", "01111110", "11111111", "11111111", "10100101"],
+    b: ["00011000", "00111100", "01111110", "11111111", "11111111", "11000011"],
+  },
+};
 
 export class GameEngine {
   width = FIELD_WIDTH;
@@ -66,10 +126,14 @@ export class GameEngine {
   moveTimer = 0;
   moveInterval = 0.8;
   pendingStepDown = false;
+  legFrame = false;
+
+  diveTimer = 3;
 
   bullets: Bullet[] = [];
   explosions: Explosion[] = [];
   enemyShootTimer = ENEMY_SHOOT_BASE_INTERVAL;
+  barriers: Barrier[] = [];
 
   score = 0;
   lives = 3;
@@ -79,14 +143,35 @@ export class GameEngine {
   input = { left: false, right: false, shoot: false };
 
   constructor() {
+    this.createBarriers();
     this.spawnWave();
+  }
+
+  createBarriers() {
+    this.barriers = [];
+    const spacing = this.width / (BARRIER_COUNT + 1);
+    for (let i = 0; i < BARRIER_COUNT; i++) {
+      const x = spacing * (i + 1) - BARRIER_WIDTH / 2;
+      const cells = BARRIER_SHAPE.map((line) => line.split("").map((c) => c === "1"));
+      this.barriers.push({ x, y: BARRIER_Y, cells });
+    }
   }
 
   spawnWave() {
     this.enemies = [];
     for (let row = 0; row < ENEMY_ROWS; row++) {
       for (let col = 0; col < ENEMY_COLS; col++) {
-        this.enemies.push({ row, col, alive: true });
+        this.enemies.push({
+          row,
+          col,
+          alive: true,
+          diving: false,
+          diveX: 0,
+          diveY: 0,
+          diveVX: 0,
+          diveVY: 0,
+          diveShot: false,
+        });
       }
     }
     this.formationX = 60;
@@ -97,6 +182,7 @@ export class GameEngine {
     this.pendingStepDown = false;
     this.bullets = this.bullets.filter((b) => b.owner === "player");
     this.enemyShootTimer = ENEMY_SHOOT_BASE_INTERVAL;
+    this.diveTimer = Math.max(1.2, 3.2 - (this.wave - 1) * 0.3);
   }
 
   start() {
@@ -113,6 +199,7 @@ export class GameEngine {
     this.lives = 3;
     this.wave = 1;
     this.status = "PLAYING";
+    this.createBarriers();
     this.spawnWave();
   }
 
@@ -124,6 +211,9 @@ export class GameEngine {
   }
 
   enemyPixelPos(e: Enemy) {
+    if (e.diving) {
+      return { x: e.diveX, y: e.diveY };
+    }
     return {
       x: this.formationX + e.col * (ENEMY_WIDTH + ENEMY_H_GAP),
       y: this.formationY + e.row * (ENEMY_HEIGHT + ENEMY_V_GAP),
@@ -160,11 +250,15 @@ export class GameEngine {
       this.playerCooldown = PLAYER_COOLDOWN;
     }
 
-    // enemy formation movement
     const alive = this.aliveEnemies();
+    const formationAlive = alive.filter((e) => !e.diving);
+    const divingAlive = alive.filter((e) => e.diving);
+
+    // enemy formation movement (divers are decoupled from the grid)
     this.moveTimer += dt;
-    if (alive.length > 0 && this.moveTimer >= this.moveInterval) {
+    if (formationAlive.length > 0 && this.moveTimer >= this.moveInterval) {
       this.moveTimer = 0;
+      this.legFrame = !this.legFrame;
       const step = 14;
       if (this.pendingStepDown) {
         this.formationY += ENEMY_STEP_DOWN;
@@ -174,7 +268,7 @@ export class GameEngine {
         this.formationX += step * this.direction;
         let minX = Infinity;
         let maxX = -Infinity;
-        for (const e of alive) {
+        for (const e of formationAlive) {
           const { x } = this.enemyPixelPos(e);
           minX = Math.min(minX, x);
           maxX = Math.max(maxX, x + ENEMY_WIDTH);
@@ -189,10 +283,46 @@ export class GameEngine {
       this.moveInterval = Math.max(0.12, (0.8 - (this.wave - 1) * 0.08) * (0.3 + 0.7 * ratio));
     }
 
-    // enemy shooting
+    // breakaway diving attack
+    this.diveTimer -= dt;
+    if (this.diveTimer <= 0 && formationAlive.length > 0 && divingAlive.length < MAX_DIVERS) {
+      const diver = formationAlive[Math.floor(Math.random() * formationAlive.length)];
+      const { x, y } = this.enemyPixelPos(diver);
+      diver.diving = true;
+      diver.diveX = x;
+      diver.diveY = y;
+      const targetX = this.player.x + this.player.width / 2 - ENEMY_WIDTH / 2;
+      diver.diveVX = Math.max(-80, Math.min(80, (targetX - x) * 0.6));
+      diver.diveVY = DIVE_SPEED_BASE + this.wave * 8;
+      diver.diveShot = false;
+      this.diveTimer = Math.max(1.0, 2.6 - (this.wave - 1) * 0.2) + Math.random();
+    }
+
+    // advance divers
+    for (const e of divingAlive) {
+      e.diveX += e.diveVX * dt;
+      e.diveY += e.diveVY * dt;
+      if (!e.diveShot && e.diveY > this.formationY + 40) {
+        e.diveShot = true;
+        this.bullets.push({
+          x: e.diveX + ENEMY_WIDTH / 2 - BULLET_WIDTH / 2,
+          y: e.diveY + ENEMY_HEIGHT,
+          width: BULLET_WIDTH,
+          height: BULLET_HEIGHT,
+          vy: ENEMY_BULLET_SPEED * 1.2,
+          owner: "enemy",
+        });
+      }
+      if (e.diveY > this.height + 30) {
+        e.alive = false;
+        e.diving = false;
+      }
+    }
+
+    // enemy shooting (formation enemies)
     this.enemyShootTimer -= dt;
-    if (this.enemyShootTimer <= 0 && alive.length > 0) {
-      const shooter = alive[Math.floor(Math.random() * alive.length)];
+    if (this.enemyShootTimer <= 0 && formationAlive.length > 0) {
+      const shooter = formationAlive[Math.floor(Math.random() * formationAlive.length)];
       const { x, y } = this.enemyPixelPos(shooter);
       this.bullets.push({
         x: x + ENEMY_WIDTH / 2 - BULLET_WIDTH / 2,
@@ -211,11 +341,41 @@ export class GameEngine {
     }
     this.bullets = this.bullets.filter((b) => b.y > -20 && b.y < this.height + 20);
 
+    // bullets vs barriers (either side's bullets get absorbed, eroding the shield)
+    for (const b of this.bullets) {
+      for (const barrier of this.barriers) {
+        if (
+          b.x + b.width < barrier.x ||
+          b.x > barrier.x + BARRIER_WIDTH ||
+          b.y + b.height < barrier.y ||
+          b.y > barrier.y + BARRIER_HEIGHT
+        ) {
+          continue;
+        }
+        let hit = false;
+        for (let row = 0; row < BARRIER_ROWS && !hit; row++) {
+          for (let col = 0; col < BARRIER_COLS; col++) {
+            if (!barrier.cells[row][col]) continue;
+            const cx = barrier.x + col * BARRIER_CELL;
+            const cy = barrier.y + row * BARRIER_CELL;
+            if (this.rectsOverlap(b.x, b.y, b.width, b.height, cx, cy, BARRIER_CELL, BARRIER_CELL)) {
+              barrier.cells[row][col] = false;
+              b.blocked = true;
+              hit = true;
+              break;
+            }
+          }
+        }
+        if (hit) break;
+      }
+    }
+    this.bullets = this.bullets.filter((b) => !b.blocked);
+
     // explosions aging
     for (const ex of this.explosions) ex.age += dt;
     this.explosions = this.explosions.filter((ex) => ex.age < 0.3);
 
-    // collisions: player bullets vs enemies
+    // collisions: player bullets vs enemies (formation + divers)
     for (const b of this.bullets) {
       if (b.owner !== "player") continue;
       for (const e of alive) {
@@ -223,6 +383,7 @@ export class GameEngine {
         const { x, y } = this.enemyPixelPos(e);
         if (this.rectsOverlap(b.x, b.y, b.width, b.height, x, y, ENEMY_WIDTH, ENEMY_HEIGHT)) {
           e.alive = false;
+          e.diving = false;
           b.y = -1000; // mark for removal
           this.score += ROW_POINTS[e.row] ?? 10;
           this.explosions.push({ x: x + ENEMY_WIDTH / 2, y: y + ENEMY_HEIGHT / 2, age: 0 });
@@ -245,9 +406,23 @@ export class GameEngine {
       this.bullets = this.bullets.filter((b) => b.y < this.height + 999);
     }
 
-    // check enemies reaching player line
-    const stillAlive = this.aliveEnemies();
-    for (const e of stillAlive) {
+    // collisions: diving enemies ramming the player
+    if (this.invulnerableTimer <= 0) {
+      for (const e of divingAlive) {
+        if (!e.alive) continue;
+        if (this.rectsOverlap(e.diveX, e.diveY, ENEMY_WIDTH, ENEMY_HEIGHT, this.player.x, this.player.y, this.player.width, this.player.height)) {
+          e.alive = false;
+          e.diving = false;
+          this.explosions.push({ x: e.diveX + ENEMY_WIDTH / 2, y: e.diveY + ENEMY_HEIGHT / 2, age: 0 });
+          this.loseLife();
+          break;
+        }
+      }
+    }
+
+    // check formation enemies reaching player line
+    const stillFormationAlive = this.aliveEnemies().filter((e) => !e.diving);
+    for (const e of stillFormationAlive) {
       const { y } = this.enemyPixelPos(e);
       if (y + ENEMY_HEIGHT >= this.player.y) {
         this.status = "GAME_OVER";
@@ -255,8 +430,8 @@ export class GameEngine {
       }
     }
 
-    // wave clear
-    if (stillAlive.length === 0) {
+    // wave clear (all enemies gone, including any mid-dive)
+    if (this.aliveEnemies().length === 0) {
       this.status = "WAVE_CLEAR";
     }
   }
@@ -279,32 +454,50 @@ export class GameEngine {
   }
 
   render(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = "#05030f";
+    ctx.fillStyle = "#020803";
     ctx.fillRect(0, 0, this.width, this.height);
 
     // starfield (static deterministic pattern)
-    ctx.fillStyle = "#2a2a40";
+    ctx.fillStyle = "#123524";
     for (let i = 0; i < 60; i++) {
       const sx = (i * 137) % this.width;
       const sy = (i * 71) % this.height;
       ctx.fillRect(sx, sy, 2, 2);
     }
 
-    // enemies
+    // enemies (dot-matrix sprites)
     for (const e of this.enemies) {
       if (!e.alive) continue;
       const { x, y } = this.enemyPixelPos(e);
-      ctx.fillStyle = ROW_COLORS[e.row] ?? "#4dd0e1";
-      ctx.fillRect(x, y, ENEMY_WIDTH, ENEMY_HEIGHT);
-      ctx.fillStyle = "#05030f";
-      ctx.fillRect(x + 6, y + 6, 6, 6);
-      ctx.fillRect(x + ENEMY_WIDTH - 12, y + 6, 6, 6);
+      const sprite = SPRITES[enemyType(e.row)];
+      const rows = this.legFrame ? sprite.b : sprite.a;
+      ctx.fillStyle = ROW_COLORS[e.row] ?? "#58ffa0";
+      for (let ry = 0; ry < rows.length; ry++) {
+        const line = rows[ry];
+        for (let rx = 0; rx < line.length; rx++) {
+          if (line[rx] === "1") {
+            ctx.fillRect(x + rx * ENEMY_PIXEL, y + ry * ENEMY_PIXEL, ENEMY_PIXEL, ENEMY_PIXEL);
+          }
+        }
+      }
+    }
+
+    // barriers
+    ctx.fillStyle = "#2d9e62";
+    for (const barrier of this.barriers) {
+      for (let row = 0; row < BARRIER_ROWS; row++) {
+        for (let col = 0; col < BARRIER_COLS; col++) {
+          if (barrier.cells[row][col]) {
+            ctx.fillRect(barrier.x + col * BARRIER_CELL, barrier.y + row * BARRIER_CELL, BARRIER_CELL, BARRIER_CELL);
+          }
+        }
+      }
     }
 
     // explosions
     for (const ex of this.explosions) {
       const r = 6 + ex.age * 40;
-      ctx.strokeStyle = `rgba(255,180,60,${Math.max(0, 1 - ex.age / 0.3)})`;
+      ctx.strokeStyle = `rgba(140,255,170,${Math.max(0, 1 - ex.age / 0.3)})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(ex.x, ex.y, r, 0, Math.PI * 2);
@@ -321,7 +514,7 @@ export class GameEngine {
 
     // bullets
     for (const b of this.bullets) {
-      ctx.fillStyle = b.owner === "player" ? "#ffffff" : "#ff5e5e";
+      ctx.fillStyle = b.owner === "player" ? "#d4ffe0" : "#1f5c38";
       ctx.fillRect(b.x, b.y, b.width, b.height);
     }
   }

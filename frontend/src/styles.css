@@ -5,7 +5,7 @@
 body {
   margin: 0;
   background: #000;
-  color: #e6e6f0;
+  color: #cdf7d8;
   font-family: "Courier New", monospace;
 }
 
@@ -48,8 +48,9 @@ h1 {
 
 .game-canvas {
   display: block;
-  background: #05030f;
-  border: 2px solid #3a3a55;
+  background: #020803;
+  border: 2px solid #1f5c38;
+  box-shadow: 0 0 16px rgba(88, 255, 160, 0.15);
   width: 100%;
   height: auto;
   image-rendering: pixelated;
@@ -93,16 +94,16 @@ h1 {
   padding: 18px 0;
   font-family: inherit;
   font-size: 22px;
-  background: #0d0d1a;
+  background: #07140d;
   color: #58ffa0;
-  border: 2px solid #3a3a55;
+  border: 2px solid #1f5c38;
   border-radius: 8px;
   user-select: none;
   touch-action: none;
 }
 
 .touch-btn:active {
-  background: #22223a;
+  background: #123524;
 }
 
 .touch-btn-shoot {
@@ -126,15 +127,15 @@ h1 {
 }
 
 .side-panel section {
-  background: #0d0d1a;
-  border: 1px solid #3a3a55;
+  background: #07140d;
+  border: 1px solid #1f5c38;
   padding: 12px 16px;
   border-radius: 6px;
 }
 
 .side-panel h3 {
   margin: 0 0 8px;
-  color: #4dd0e1;
+  color: #3ddc84;
   font-size: 14px;
 }
 
@@ -156,17 +157,17 @@ h1 {
   display: flex;
   gap: 8px;
   padding: 3px 0;
-  border-bottom: 1px solid #22223a;
+  border-bottom: 1px solid #123524;
 }
 
 .leaderboard .rank {
   width: 18px;
-  color: #ffb703;
+  color: #baffc9;
 }
 
 .leaderboard .name {
   flex: 1;
-  color: #e6e6f0;
+  color: #cdf7d8;
 }
 
 .leaderboard .score {
@@ -183,8 +184,8 @@ h1 {
 }
 
 .submit-form {
-  background: #0d0d1a;
-  border: 1px solid #3a3a55;
+  background: #07140d;
+  border: 1px solid #1f5c38;
   padding: 12px 16px;
   border-radius: 6px;
   display: flex;
@@ -193,16 +194,17 @@ h1 {
 }
 
 .submit-form input {
-  background: #05030f;
-  border: 1px solid #3a3a55;
-  color: #e6e6f0;
+  background: #020803;
+  border: 1px solid #1f5c38;
+  color: #cdf7d8;
   padding: 6px 8px;
   font-family: inherit;
 }
 
 .submit-form button {
   padding: 8px;
-  background: #4dd0e1;
+  background: #58ffa0;
+  color: #020803;
   border: none;
   border-radius: 4px;
   cursor: pointer;
